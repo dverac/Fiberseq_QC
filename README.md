@@ -5,7 +5,9 @@ data. It is divided into two parts: base and functional. The pipeline is
 based in snakemake version7, which is loaded in the conda enviroment.
 `/project/spott/dveracruz/bin/miniconda3/envs/fiber_sq`.
 
-### Conda environments it depends:
+### Conda and Conda environments it depends:
+
+This pipeline assumes that you have conda installed and the following environments are available. 
 
 -   fiber\_sq = `/project/spott/dveracruz/bin/miniconda3/envs/fiber_sq`.
     This environment is used for snakemake7, samtools, python and R.
@@ -14,6 +16,8 @@ based in snakemake version7, which is loaded in the conda enviroment.
     `/project/spott/dveracruz/bin/miniconda3/envs/dimelo_modkit_parsing`
     Used mostly for modkit, this is only included in the report for
     Nanopore data, but is always ran.
+
+A yaml file with the conda environment is included in `workflow/conda_env`. You can create your own enviroments and modify the smk files to use them.
 
 ### Base metrics
 
