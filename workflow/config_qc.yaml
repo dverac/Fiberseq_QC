@@ -1,0 +1,14 @@
+##  CONFIG FILE. 
+
+reference: "GRCh38" #GRCh38 or TAIR
+
+platform: "Nanopore" ## or PacBio
+
+# w_dir: "/project/spott/dveracruz/mini_projects/QC_plots/results"
+w_dir: "/project/spott/dveracruz/fiberseq_QC/project_dir/QC"
+
+## BAM files per samples:
+# /project/spott/lizarraga/nanopore/dorado/results/25_02_25 - Raw files. 
+# BAM, with filter + nucleosome. /project/spott/1_Shared_projects/macrophages_Fiber_seq/FIRE/bam
+samples:
+    test2: "/project/spott/1_Shared_projects/LCL_Fiber_seq/tmp2/test.5mC.6mA.aligned.phased.bam"

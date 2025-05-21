@@ -1,0 +1,22 @@
+##  CONFIG FILE: For hifi_bam_qc_func snakemake workflow, but also compatible with hifi_bam_qc snakemake workflow. 
+
+reference: "GRCh38" ## or "TAIR10" for Arabidopsis data
+
+platform: "PacBio" ## or Nanopore.
+
+# w_dir: Working directory, where the workflow will be executed and output stored. 
+w_dir: "/project/spott/dveracruz/fiberseq_QC/project_dir/QC"
+
+## TSS bed file to use for promoters, Choose one of the two available, if you have a different one, imitate the format of the one provided.
+TSS: "/project/spott/dveracruz/data/LCL_annotation/TSS/TSS_1kb.bed"  ## HUMAN DATA
+##TSS:"/project/spott/dveracruz/mini_projects/ArabidopsisT/data/regions/TSS/TSS_1kb.bed" ## Arabidopsis data
+
+## BAM files per samples:
+samples:
+    test2: "/project/spott/1_Shared_projects/LCL_Fiber_seq/tmp2/test.5mC.6mA.aligned.phased.bam"
+
+## Fire directories, names should match the ones in the bam files.
+fire_dirs:
+    test2: "/project/spott/1_Shared_projects/LCL_Fiber_seq/FIRE/results/LCL_18508"
+
+

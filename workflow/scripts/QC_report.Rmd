@@ -1,0 +1,364 @@
+---
+title: "QC Report: `r params$sample`"
+subtitle: "HiFi BAM"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+params:
+  w_dir: "/Volumes/spott/1_Shared_Projects/macrophages_Fiber_seq/QC2/MF_control"
+  sample: 'MF control'
+  bam: '/project/spott/1_Shared_projects/LCL_Fiber_seq/preprocess/alignment/m84241_250117_150907_s1.hifi_reads.bc2107.5mc.6ma.aligned.bam'
+  platform: "Nanopore"
+---
+
+# Sample information
+
+**BAM file**: `r params$bam`
+
+**Platform**: `r params$platform`
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(DT)
+library(ggpointdensity)
+
+theme_set(theme_bw())
+
+sam_name = params$sample
+
+## Check the files needed are present. 
+file_preffix = c(mosdepth = 'mosdepth.summary.txt',  
+                 samtools = 'samtools_stats.txt$', 
+                 modkit_prob = 'thresholds.tsv',
+                 modkit_summary = 'modkit_summary.txt',
+                 byread = 'byRead.tsv')
+
+files = map(file_preffix, function(x) list.files(params$w_dir, pattern = x, full.names = T))
+
+if(sum( map_dbl(files, length) == 0 ) > 0) stop('Missing files in working directory')
+
+## Check if the Platform is Nanopore or PacBio. -> Modkit section will only be relevant for Nanopore.
+is_nano = ifelse(tolower(params$platform) == 'nanopore', TRUE, FALSE)
+
+tab = list()
+```
+
+#  {.tabset}
+
+## Mosdepth: Coverage 
+
+Coverage was assessed using **mosdepth**, calculating the mean coverage in the sample in total and per contig. 
+
+```{r mosdepth, include = F}
+## Read results from Mosdepth.
+## Convert to Million Base Pairs (Columns length & bases)
+# '../test.mosdepth.summary.txt'
+cov = read_tsv(files$mosdepth) %>% 
+  mutate(length= length/1000000, bases = bases/1000000, Pct = bases / bases[chrom == 'total'] * 100) %>% 
+  dplyr::rename(length_Mb = length, bases_Mb = bases) %>% filter(!grepl('_', chrom))  %>% 
+  arrange(desc(length_Mb)) %>% mutate(chrom = factor(chrom, levels = chrom)) %>% 
+  mutate_at(vars(length_Mb, bases_Mb, Pct), ~round(., digits = 2)) 
+```
+
+```{r mosdepth_plot, echo = F, warning = F}
+## Adding log10 scale to the y-axis to include also plasmids or other non-chromosomal sequences.
+cov %>% filter(mean < 100) %>% arrange(desc(length_Mb)) %>% 
+  mutate(chrom = factor(chrom, levels = chrom)) %>% 
+  ggplot(aes(x = chrom, y = mean)) +
+  geom_hline(yintercept = 0, color = 'grey60') + #geom_segment(aes(xend = chrom, y = min, yend = max)) +
+  geom_col(fill = 'salmon3') + 
+  labs(y = 'Mean', x = 'Chromosome', title ='Coverage - Mosdepth', caption = 'Canonical chromosomes, sorted by length, with cov < 100') + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) #+ scale_y_log10() 
+```
+
+
+```{r mosdepth_table, echo = F}
+## Add key metrics to table. 
+tab = c(tab, 
+        list(
+          `Mosdepth: Total bases (Mb)` = cov$length_Mb[cov$chrom == 'total'], 
+          `Mosdepth: Total bases covered (Mb)` = cov$bases_Mb[cov$chrom == 'total'], 
+          `Mosdepth: Mean coverage` = round(cov$mean[cov$chrom == 'total'], digits = 2)
+        ))
+
+## Display results
+knitr::kable(cov, caption = "Coverage summary: Mosdepth")
+```
+
+
+## Samtools stats
+
+```{r samtools_stats, echo = F}
+# Function to parse the samtools stats file
+parse_samtools_stats <- function(file_path) {
+  # Initialize lists to store data
+  read_lengths = data.frame(Length = integer(), Count = integer())
+  coverage = data.frame(Coverage = integer(), Count = integer())
+  summary_df = data.frame(Field = character(), Value = character())
+  
+  # Read the file line by line
+  con <- file(file_path, open = "r")
+  while (TRUE) {
+    line <- readLines(con, n = 1, warn = FALSE)
+    if(length(line) == 0) break
+
+    ## Summary
+    if (startsWith(line, "SN")) {
+      fields <- strsplit(line, "\t")[[1]]
+      summary_df <- rbind(summary_df, data.frame(Field = gsub(':', '',fields[2]), Value = fields[3]))
+    }
+    
+    # Parse read length distribution (lines starting with "RL")
+    if (startsWith(line, "RL")) {
+      fields <- strsplit(line, "\t")[[1]]
+      read_lengths <- rbind(read_lengths, data.frame(Length = as.integer(fields[2]), Count = as.integer(fields[3])))
+    }
+    
+    # Parse coverage distribution (lines starting with "COV")
+    if (startsWith(line, "COV")) {
+      fields <- strsplit(line, "\t")[[1]]
+      coverage <- rbind(coverage, data.frame(Coverage = as.integer(fields[3]), Count = as.integer(fields[4])))
+    }
+  }
+  close(con)
+  ## Convert summary_df$Value to numeric if possible.
+  summary_df$Value = as.numeric(summary_df$Value)
+  
+  return( list(read_lengths = read_lengths, coverage = coverage, summary_df = summary_df) )
+}
+
+# Function to plot read length distribution
+plot_samtools_read_length = function(read_lengths) {
+  ## Before the plot, collapse the read lengths to a bin size of 100bp
+  read_lengths = read_lengths %>% mutate(bin = cut(Length, breaks = seq(0, max(Length), by = 100))) %>% 
+    group_by(bin) %>% summarise(Count = sum(Count), ln = round(min(Length) / 100, digits = 0)) %>% ungroup() 
+  
+  read_lengths$ln = read_lengths$ln * 100
+  
+  ggplot(read_lengths, aes(x = ln, y = Count)) +
+    geom_bar(stat = "identity", fill = "blue", alpha = 0.7) +
+    labs(title = "Read Length Distribution", x = "Read Length (100bp windows)", y = "Number of Reads")
+}
+
+# Function to plot coverage distribution
+plot_samtools_coverage = function(coverage) {
+  ggplot(coverage, aes(x = Coverage, y = Count / 10^6)) +
+    geom_bar(stat = "identity", fill = "green3", alpha = 0.7) +
+    labs(title = "Coverage Distribution", x = "Coverage", y = "Number of bases in reference (Mb)")
+}
+
+## Parse stats into a list. 
+parsed_stats <- parse_samtools_stats(files$samtools) # Path to the samtools stats output file
+
+# Plot read length distribution
+plot_samtools_read_length(parsed_stats$read_lengths)
+
+# Plot coverage distribution
+plot_samtools_coverage(parsed_stats$coverage %>% filter(Coverage <= 200))
+```
+
+
+```{r samtools_stats_tab, echo = F}
+## Add key stats to table. 
+tab = c(tab, 
+        list(
+          `Samtools: Total reads` = filter(parsed_stats$summary_df, Field == 'raw total sequences')$Value, 
+          `Samtools: Total bases (Mb)` = filter(parsed_stats$summary_df, Field == 'total length')$Value/(10^6),
+          `Samtools: Mapped reads` = filter(parsed_stats$summary_df, Field == 'reads mapped')$Value, 
+          `Samtools: Unmapped reads` = filter(parsed_stats$summary_df, Field == 'reads unmapped')$Value, 
+          `Samtools: Reads with MQ0` = filter(parsed_stats$summary_df, Field == 'reads MQ0')$Value
+        ))
+
+## Table with summary stats. 
+filter(parsed_stats$summary_df, 
+       Field %in% c('raw total sequences', 'reads mapped', 'reads unmapped', 'bases mapped',  
+                    'total length', 'reads MQ0')) %>% 
+  knitr::kable(caption = "Summary statistics: Samtools Stats")
+```
+
+
+`r if (is_nano) "## Modkit Summary"`  
+
+  * Cm -> 5mC
+
+  * Aa -> 6mA
+
+  * C- / A- -> Canonical C or A.
+
+```{r modkit, eval = is_nano, echo = F}
+## Read modkit thresholds (sample-probs) & summary.
+modkit_prob = read.table(files$modkit_prob, header = T) 
+
+modkit = read.table(files$modkit_summary, skip = 5, header = F, 
+           col.names = c('base', 'code', 'Pass_count', 'Pass_Fraction', 'All_Count', 'All_Fraction'))
+
+## Add to table the key metrics. 
+tab = c(tab, list(
+`Modkit: C prob Q10` = filter(modkit_prob, base == 'C' & percentile == 10)$threshold, 
+`Modkit: C prob Q50` = filter(modkit_prob, base == 'C' & percentile == 50)$threshold,
+`Modkit: A prob Q10` = filter(modkit_prob, base == 'A' & percentile == 10)$threshold, 
+`Modkit: A prob Q50` = filter(modkit_prob, base == 'A' & percentile == 50)$threshold, 
+`Modkit: 5mC Fraction` = filter(modkit, base == 'C', code == 'm')$All_Fraction, 
+`Modkit: 6mA Fraction` = filter(modkit, base == 'A', code == 'a')$All_Fraction
+))
+
+modkit %>% knitr::kable(caption = "Modkit Summary", digits = 3)
+```
+
+
+```{r, eval = is_nano, echo = F}
+ggplot(modkit_prob, aes(x = percentile, y = threshold, fill = base)) + geom_col() + 
+  geom_text(aes(label = round(threshold, digits = 3), y = 0.1)) +
+  facet_wrap(~base) + theme(legend.position = 'none') + labs(title = 'Modkit Probability Threshold')
+```
+
+
+## Reads stats: Total reads, N50, lengths, MapQ and Median QV
+
+Calculated using pysam, per read, multiple metrics were obtained. 
+
+```{r byread_loading, include = F}
+#rd = read_tsv("../output.tsv")[,-1]
+rd = read_tsv(files$byread)[,-1]
+rd = filter(rd, Length > 0) ## Omit the reads with no sequence associated.
+```
+
+```{r byread_reads, echo = F}
+## Overall Stats, prior to filtering for 
+ln = sort(rd$Length)
+ix = which( cumsum(ln) >= sum(ln)/2)[1]
+
+## Get the total number of reads with no sequence associated.
+tab = c(tab,  
+        list(
+          `HiFi read yield (Gb)` = round( sum(rd$Length)/10^9, digits = 3), 
+          `Number of reads` = nrow(rd), 
+          `Insert length N50` = ln[ix]
+          ))
+ 
+count(rd, class) %>% mutate(class = ifelse(class == 'Complete', 'Mapped', class), n = round(n/10^6, digits = 2)) %>% knitr::kable(caption = 'Number of reads (Gb)')
+
+A = data.frame(length = ln, cumsum = cumsum(ln)) %>% 
+  ggplot(aes(x = length, y = cumsum / 10^9)) + geom_line() + # scale_y_log10() +
+  geom_vline(xintercept = ln[ix], color = 'red3') +
+  labs(x = 'Read length', y = 'Total bases (Gb)', title = 'Total: Read lengths and N50') 
+
+print(A)
+ggsave(file.path(params$w_dir, 'total_read_length_N50.png'), A, width = 6, height = 4)
+
+## Filter to only mapped reads, compute N50 
+rd = filter(rd, class == 'Complete')
+
+ln = sort(rd$Length)
+ix = which( cumsum(ln) >= sum(ln)/2)[1]
+
+A = data.frame(length = ln, cumsum = cumsum(ln)) %>% 
+  ggplot(aes(x = length, y = cumsum / 10^9)) + geom_line() + # scale_y_log10() +
+  geom_vline(xintercept = ln[ix], color = 'red3') +
+  labs(x = 'Read length', y = 'Total bases (Gb)', title = 'Mapped, gDNA: Read lengths and N50') 
+
+print(A)
+ggsave(file.path(params$w_dir, 'Mapped_read_length_N50.png'), A, width = 6, height = 4)
+
+
+## Summary table
+tab = c(tab, 
+        list(
+              `Mapped, gDNA reads` = nrow(rd), 
+              `Mapped, gDNA Insert length N50` = ln[ix], 
+              `Mean Coverage` = round( (sum(rd$Length) / 10^6) / cov$length_Mb[cov$chrom == 'total'], digits = 2), 
+              `Median HiFi read MAPQ` = median(rd$MapQ),
+              `Median HiFi read QV` = median(rd$MedianQV),
+              `Percent Reads haplotype phased` = sum(!is.na(rd$Haplotype)) / nrow(rd) * 100
+            ))
+
+```
+
+
+```{r byread_qc, echo = F}
+ggplot(rd, aes(x = Length)) + geom_histogram(binwidth = 100, color = 'navy') + 
+  labs(title = 'Read length', x= 'Read length (bp) Binwidth = 100bp', y = 'Number of reads')
+
+ggplot(rd, aes(x = MapQ)) + geom_histogram(binwidth = 1, color = 'black', fill = 'purple') +
+  labs(title = 'Read Map Quality', x= 'Read MAPQ', y = 'Number of reads')
+
+ggplot(rd, aes(x = MedianQV)) + geom_histogram(binwidth = 1, color = 'black', fill = 'turquoise') +
+  labs(title = 'Read Median QV', x= 'Read Base quality (QV)', y = 'Number of reads')
+```
+
+## Methylation per read: 6mA and 5mC
+
+Two main metrics: 
+
+  - X Methylation fraction: Fraction of methylated bases above threshold from all AT bases(6mA, A and T for PacBio, A only for Nanopore)  or CG sites in the read. 
+  
+  - X Methylated above threshold / bases in MM/ML tags:  Fraction of methylated bases above threshold from all tested positions. (bases in MM/ML tags << Number of A/T bases or CG sites.)
+
+
+```{r byread_met, echo = F, warning = F, message = F, fig.width = 6, fig.height = 4}
+
+## Proportion of the total bases (AT/CG) methylated in the read.
+ggplot(rd, aes(x = PercentageMethylatedA)) + 
+  geom_histogram(binwidth = 1, fill = 'blue', color = 'black', linewidth = 0.2) + 
+  #scale_x_continuous(limits = c(-0.01, 100)) +
+  labs(x = '6mA methylation fraction (%)', y = 'Number of reads', title = '6mA Methylation per read', 
+       caption = 'Methylated A above threshold / total A bases')
+
+ggplot(rd, aes(x = PercentageMethylatedC)) +
+  geom_histogram(binwidth = 1, fill = 'orange', color = 'black', linewidth = 0.2) + 
+  #scale_x_continuous(limits = c(-0.01, 100)) +
+  labs(x = '5mC methylation fraction (%)', y = 'Number of reads', title = '5mC Methylation per read', 
+       caption = 'Methylated C above threshold / total CG sites')
+
+## Scatter plot of 6mA and 5mC methylation per read.
+ggplot(rd, aes(x = PercentageMethylatedA, y = PercentageMethylatedC)) + 
+   geom_bin2d(binwidth = 1) + scale_fill_gradient(low = 'grey90', high = 'navy') + 
+  labs(x = '6mA methylation fraction (%)', y = '5mC methylation fraction (%)', fill = 'Number of\nreads')
+
+## Fraction of methylated bases above threshold from all tested. 
+ggplot(rd, aes(x = FractionMethylatedA )) + 
+  geom_histogram(binwidth = 0.01, fill = 'blue', color = 'black', linewidth = 0.2) + 
+  scale_x_continuous(limits = c(-0.01, 1)) +
+  labs(x = '6mA Passed threshold/MM tag', y = 'Number of reads', 
+       title = '6mA Methylated above threshold / AT bases in MM/ML tags')
+
+ggplot(rd, aes(x = FractionMethylatedC )) +
+  geom_histogram(binwidth = 0.01, fill = 'orange', color = 'black', linewidth = 0.2) + 
+  scale_x_continuous(limits = c(-0.01, 1)) +
+  labs(x = '5mC Passed threshold/MM tag', y = 'Number of reads', 
+       title = '5mC Methylated above threshold / CG bases in MM/ML tags')
+  
+```
+
+
+```{r byread_table, echo = F}
+## Add to table the percentage methylation per reads with 6mA and 5mC methylation above threshold.
+tab = c(tab, 
+            list(
+              `Reads with no 6mA methylation` = sum(rd$FractionMethylatedA == 0),
+              `Mean 6mA methylation fraction per read` = mean(rd$PercentageMethylatedA / 100) %>% round(digits = 3), 
+              `Median 6mA methylation fraction per read` = median(rd$PercentageMethylatedA / 100) %>% round(digits = 3), 
+              `Reads with no 5mC methylation` = sum(rd$FractionMethylatedC == 0),
+              `Mean 5mC methylation fraction per read` = mean(rd$PercentageMethylatedC / 100) %>% round(digits = 3), 
+              `Median 5mC methylation fraction per read` = median(rd$PercentageMethylatedC / 100) %>% round(digits = 3), 
+              `Reads with no 5mC and 6mA methylation` = sum(rd$FractionMethylatedC == 0 & rd$FractionMethylatedA == 0)
+            ))
+```
+
+
+## Summary table
+
+```{r byread_table2, echo = F}
+tab2 = map_dfr(names(tab), ~data.frame(Field =.x, Value = tab[[.x]] %>% as.numeric))
+## Keep at most 3 digits for decimals, and omit 0 after dot. 
+tab2$Value = format(tab2$Value, scientific = F, digits = 3, drop0trailing = T)
+names(tab2)[2] = sam_name
+
+write.table(tab2, file.path(params$w_dir, 'read_summary.tsv'), row.names = F)
+knitr::kable(tab2, caption = "Reads summary")
+
+```
+
