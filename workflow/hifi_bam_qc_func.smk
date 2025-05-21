@@ -39,10 +39,6 @@ rule mosdepth_cov:
         dir = "{dir}/{sample}",
     shell:
         """
-        module load gcc/13.2.0 
-        module load cmake/3.26
-        module load python/anaconda-2024.10
-
         source activate /project/spott/dveracruz/bin/miniconda3/envs/fiber_sq
 
         cd {params.dir}
