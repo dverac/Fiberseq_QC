@@ -1,0 +1,15 @@
+# Ignore folders. 
+misc_scripts/
+profiles/
+project_dir/
+.snakemake/
+
+# Ignore specific files in workflow.
+workflow/*html
+workflow/scripts/*html
+workflow/config_qc_v2.yaml
+workflow/hifi_bam_qc_v2.smk
+
+
+# Others
+.DS_Store
