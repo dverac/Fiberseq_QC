@@ -99,8 +99,8 @@ Use always full paths.
 
 ## Pipeline structure
 
-![Base pipeline](./misc/dag_base.png) ![Base and functional
-pipeline](./misc/dag_func.png)
+![Base pipeline](./workflow/misc/dag_base.png) ![Base and functional
+pipeline](./workflow/misc/dag_func.png)
 
 ## Running pipeline
 
