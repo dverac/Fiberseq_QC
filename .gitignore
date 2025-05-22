@@ -4,6 +4,10 @@ profiles/
 project_dir/
 .snakemake/
 
+## Logs files
+*err
+*out
+
 # Ignore specific files in workflow.
 workflow/*html
 workflow/scripts/*html
